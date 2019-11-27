@@ -31,8 +31,9 @@ import {
 } from 'src/timeMachine/actions/queryBuilder'
 
 // Utils
-import {toComponentStatus} from 'src/shared/utils/toComponentStatus'
 import DefaultDebouncer from 'src/shared/utils/debouncer'
+import {isFlagEnabled} from 'src/shared/utils/featureFlag'
+import {toComponentStatus} from 'src/shared/utils/toComponentStatus'
 import {
   getActiveQuery,
   getActiveTimeMachine,
@@ -80,8 +81,6 @@ type Props = StateProps & DispatchProps & OwnProps
 class TagSelector extends PureComponent<Props> {
   private debouncer = new DefaultDebouncer()
 
-  // bucky: this will currently always be 'Filter'
-  // updates to this are imminent
   private renderAggregateFunctionType(
     aggregateFunctionType: BuilderAggregateFunctionType
   ) {
@@ -92,16 +91,29 @@ class TagSelector extends PureComponent<Props> {
   }
 
   public render() {
-    const {aggregateFunctionType, index} = this.props
-
     return (
       <BuilderCard>
-        <BuilderCard.Header
-          title={this.renderAggregateFunctionType(aggregateFunctionType)}
-          onDelete={index !== 0 && this.handleRemoveTagSelector}
-        />
+        {this.header}
         {this.body}
       </BuilderCard>
+    )
+  }
+
+  private get header() {
+    const {aggregateFunctionType, index} = this.props
+
+    return isFlagEnabled('queryBuilderGrouping') ? (
+      <BuilderCard.DropdownHeader
+        options={['filter', 'group']}
+        selectedOption={this.renderAggregateFunctionType(aggregateFunctionType)}
+        onDelete={index !== 0 && this.handleRemoveTagSelector}
+        onSelect={this.handleAggregateFunctionSelect}
+      />
+    ) : (
+      <BuilderCard.Header
+        title={this.renderAggregateFunctionType(aggregateFunctionType)}
+        onDelete={index !== 0 && this.handleRemoveTagSelector}
+      />
     )
   }
 
@@ -265,17 +277,25 @@ class TagSelector extends PureComponent<Props> {
 
     onSearchValues(index)
   }
+
+  private handleAggregateFunctionSelect = (
+    option: BuilderAggregateFunctionType
+  ) => {
+    const {index, onSetBuilderAggregateFunctionType} = this.props
+    onSetBuilderAggregateFunctionType(option, index)
+  }
 }
 
 const mstp = (state: AppState, ownProps: OwnProps): StateProps => {
+  const activeQueryBuilder = getActiveTimeMachine(state).queryBuilder
+
   const {
     keys,
     keysSearchTerm,
     keysStatus,
-    values,
     valuesSearchTerm,
     valuesStatus,
-  } = getActiveTimeMachine(state).queryBuilder.tags[ownProps.index]
+  } = activeQueryBuilder.tags[ownProps.index]
 
   const tags = getActiveQuery(state).builderConfig.tags
   const {
@@ -285,11 +305,33 @@ const mstp = (state: AppState, ownProps: OwnProps): StateProps => {
   } = tags[ownProps.index]
 
   let emptyText: string
-
-  if (ownProps.index === 0 || !tags[ownProps.index - 1].key) {
+  const previousTagSelector = tags[ownProps.index - 1]
+  if (
+    ownProps.index === 0 ||
+    !previousTagSelector ||
+    !previousTagSelector.key
+  ) {
     emptyText = ''
   } else {
     emptyText = `Select a ${tags[ownProps.index - 1].key} value first`
+  }
+
+  // if we're grouping, we want to be able to group on all previous tags
+  let {values} = activeQueryBuilder.tags[ownProps.index]
+  if (
+    isFlagEnabled('queryBuilderGrouping') &&
+    aggregateFunctionType === 'group'
+  ) {
+    values = []
+    activeQueryBuilder.tags.forEach((tag, i) => {
+      // if we don't skip the current set of tags, we'll double render them at the bottom of the selector list
+      if (i === ownProps.index) {
+        return
+      }
+      tag.values.forEach(value => {
+        values.push(value)
+      })
+    })
   }
 
   const isInCheckOverlay = getIsInCheckOverlay(state)

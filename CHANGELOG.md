@@ -2,6 +2,8 @@
 
 ### Features
 
+1. [16226](https://github.com/influxdata/influxdb/pull/16226): Add group() to Query Builder
+
 ### Bug Fixes
 
 1. [16235](https://github.com/influxdata/influxdb/pull/16235): Removed default frontend sorting when flux queries specify sorting
