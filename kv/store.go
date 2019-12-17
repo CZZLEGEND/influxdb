@@ -121,6 +121,8 @@ type ForwardCursor interface {
 	// Err returns non-nil if an error occurred during cursor iteration.
 	// This should always be checked after Next returns a nil key/value.
 	Err() error
+	// Close is reponsible for freeing any resources created by the cursor.
+	Close() error
 }
 
 // CursorDirection is an integer used to define the direction

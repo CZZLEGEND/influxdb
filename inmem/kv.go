@@ -247,7 +247,11 @@ type pair struct {
 
 // ForwardCursor returns a directional cursor which starts at the provided seeked key
 func (b *Bucket) ForwardCursor(seek []byte, opts ...kv.CursorOption) (kv.ForwardCursor, error) {
-	pairs := make(chan []pair)
+	var (
+		pairs = make(chan []pair)
+		stop  = make(chan struct{})
+	)
+
 	go func() {
 		defer close(pairs)
 
@@ -268,6 +272,13 @@ func (b *Bucket) ForwardCursor(seek []byte, opts ...kv.CursorOption) (kv.Forward
 		var batch []pair
 
 		iterate(func(i btree.Item) bool {
+			select {
+			case <-stop:
+				// if signalled to stop then exit iteration
+				return false
+			default:
+			}
+
 			j, ok := i.(*item)
 			if !ok {
 				batch = append(batch, pair{err: fmt.Errorf("error item is type %T not *item", i)})
@@ -296,7 +307,7 @@ func (b *Bucket) ForwardCursor(seek []byte, opts ...kv.CursorOption) (kv.Forward
 		}
 	}()
 
-	return &ForwardCursor{pairs: pairs}, nil
+	return &ForwardCursor{pairs: pairs, stop: stop}, nil
 }
 
 // ForwardCursor is a kv.ForwardCursor which iterates over an in-memory btree
@@ -306,6 +317,8 @@ type ForwardCursor struct {
 	cur []pair
 	n   int
 
+	stop   chan struct{}
+	closed bool
 	// error found during iteration
 	err error
 }
@@ -315,9 +328,38 @@ func (c *ForwardCursor) Err() error {
 	return c.err
 }
 
+// Close releases the producing goroutines for the forward cursor.
+// It blocks until the producing goroutine exits.
+func (c *ForwardCursor) Close() error {
+	if c.closed {
+		return nil
+	}
+
+	close(c.stop)
+
+	c.closed = true
+
+	// drain any existing pairs and set any encountered
+	// errors on cursor
+	for {
+		pairs, ok := <-c.pairs
+		if !ok {
+			break
+		}
+
+		if c.err == nil {
+			for _, pair := range pairs {
+				c.err = pair.err
+			}
+		}
+	}
+
+	return nil
+}
+
 // Next returns the next key/value pair in the cursor
 func (c *ForwardCursor) Next() ([]byte, []byte) {
-	if c.err != nil {
+	if c.err != nil || c.closed {
 		return nil, nil
 	}
 
